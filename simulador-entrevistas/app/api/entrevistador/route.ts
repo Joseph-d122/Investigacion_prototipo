@@ -1,46 +1,39 @@
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 export async function POST(req: NextRequest) {
   try {
-    // Recibimos la transcripción de la voz del estudiante
-    const body = await req.json();
-    const { userResponse, currentQuestion } = body;
+    const { userResponse, currentQuestion, turnCount, companyName } = await req.json();
 
-    const systemPrompt = `Eres un reclutador corporativo experto. Estás realizando una entrevista laboral simulada a un estudiante universitario próximo a realizar pasantías[cite: 1, 2].
-    
-    Tus objetivos de evaluación (basados en rúbricas estrictas) son:
-    1. Comunicación asertiva: Evalúa claridad, estructura, tono y pertinencia[cite: 1].
-    2. Capacidad de síntesis: Revisa si hay proporción de ideas relevantes sin extenderse demasiado[cite: 1].
-    3. Empatía interactiva: Respuestas que adecúan el mensaje al contexto corporativo[cite: 1].
-    
-    Pregunta que hiciste: "${currentQuestion}"
-    Respuesta del estudiante: "${userResponse}"
-    
-    Debes responder ÚNICAMENTE en formato JSON válido con dos claves:
-    - "feedback": Un comentario constructivo, formativo y directo (máximo 2 líneas) sobre su respuesta, mencionando sus puntos fuertes y áreas de mejora[cite: 1]. Evita diagnósticos psicológicos[cite: 1].
-    - "nextQuestion": La siguiente pregunta conductual para la entrevista (hazla retadora para evaluar manejo de presión)[cite: 1, 2].`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt }
-      ],
-      response_format: { type: "json_object" }, // Obligamos a la IA a devolver un JSON
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
     });
 
-    const result = JSON.parse(completion.choices[0].message.content || "{}");
+    const isLastTurn = turnCount >= 5; // La entrevista durará 5 preguntas
 
-    return NextResponse.json(result);
+    const prompt = `Eres un reclutador experto enfocado en la empresa "${companyName}".
+    ${isLastTurn ? "Esta es la última pregunta." : ""}
+    
+    Reglas:
+    1. Haz preguntas concisas (máximo 15 palabras) sobre habilidades técnicas y blandas aplicadas a ${companyName}.
+    2. Evalúa la respuesta anterior del estudiante de forma breve y constructiva.
+    
+    Respuesta anterior: "${userResponse}"
+    Pregunta anterior: "${currentQuestion}"
+    
+    Responde en JSON:
+    - "feedback": Breve análisis de la respuesta anterior.
+    - "nextQuestion": Tu siguiente pregunta (o "FIN" si ya se completaron los turnos).
+    - "finalReport": Si es el último turno, genera un resumen con 3 consejos clave de mejora. Si no, pon "".`;
+
+    const result = await model.generateContent(prompt);
+    const parsedResult = JSON.parse(result.response.text());
+
+    return NextResponse.json(parsedResult);
   } catch (error) {
-    console.error("Error en /api/entrevistador:", error);
-    return NextResponse.json(
-      { error: "Error al generar la retroalimentación." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error" }, { status: 500 });
   }
 }

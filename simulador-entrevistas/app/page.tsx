@@ -1,184 +1,135 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-// Importamos el hook para el micrófono
-import useAudioRecorder from "../hooks/useAudioRecorder";
+import { useState, useEffect } from "react";
 
-export default function SimuladorEntrevistas() {
-  const { isRecording, startRecording, stopRecording } = useAudioRecorder();
-  
-  const [currentQuestion, setCurrentQuestion] = useState("¡Hola! Para empezar, cuéntame sobre una situación reciente en la que tuviste que trabajar bajo mucha presión.");
-  const [feedback, setFeedback] = useState("");
-  const [transcript, setTranscript] = useState("");
+export default function SimuladorVisualNovel() {
+  const [companyName, setCompanyName] = useState("");
+  const [started, setStarted] = useState(false);
+  const [turnCount, setTurnCount] = useState(0);
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [displayedText, setDisplayedText] = useState("");
+  const [userInput, setUserInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  
-  const [metrics, setMetrics] = useState({
-    latency: 0,
-    duration: 0,
-    fillerWords: 0,
-  });
+  const [lastFeedback, setLastFeedback] = useState("");
 
-  const questionStartTime = useRef(Date.now());
-  const answerStartTime = useRef(0);
-
-  // Reiniciamos el reloj de latencia cada vez que la IA lanza una nueva pregunta
+  // Efecto de máquina de escribir
   useEffect(() => {
-    questionStartTime.current = Date.now();
+    if (!currentQuestion) return;
+    let i = 0;
+    setDisplayedText("");
+    setIsTyping(true);
+    const intervalId = setInterval(() => {
+      setDisplayedText(currentQuestion.slice(0, i + 1));
+      i++;
+      if (i >= currentQuestion.length) {
+        clearInterval(intervalId);
+        setIsTyping(false);
+      }
+    }, 30);
+    return () => clearInterval(intervalId);
   }, [currentQuestion]);
 
-  const handleStart = () => {
-    // Cálculo de la latencia en segundos (Manejo de presión)[cite: 1, 2]
-    const latencyCalc = (Date.now() - questionStartTime.current) / 1000;
-    setMetrics((prev) => ({ ...prev, latency: Number(latencyCalc.toFixed(2)) }));
-    
-    answerStartTime.current = Date.now();
-    startRecording();
+  const startInterview = async () => {
+    if (!companyName.trim()) return;
+    setStarted(true);
+    setTurnCount(1);
+    setCurrentQuestion(`Hola, bienvenido a la entrevista para ${companyName}. ¿Qué habilidades consideras clave para el éxito en nuestro sector?`);
   };
 
-  const handleStop = async () => {
-    // Cálculo de la duración de la respuesta (Capacidad de síntesis)[cite: 1, 2]
-    const durationCalc = (Date.now() - answerStartTime.current) / 1000;
-    setMetrics((prev) => ({ ...prev, duration: Number(durationCalc.toFixed(2)) }));
-    
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userInput.trim() || isProcessing) return;
+
     setIsProcessing(true);
-    
-    const audioBlob = await stopRecording();
+    const nextCount = turnCount + 1;
 
-    if (audioBlob) {
-      await processAudio(audioBlob);
-    } else {
-      console.error("No se generó el archivo de audio.");
-      setIsProcessing(false);
-    }
-  };
-
-  const processAudio = async (blob: Blob) => {
     try {
-      // 1. Transcribimos la voz usando el endpoint de Whisper
-      const formData = new FormData();
-      formData.append("audio", blob, "audio.webm");
-
-      const transResponse = await fetch("/api/transcribir", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!transResponse.ok) {
-        throw new Error("Error en la API de transcripción (Verifica tu saldo de OpenAI)");
-      }
-
-      const transData = await transResponse.json();
-      const text = transData.text || "";
-      setTranscript(text);
-
-      // 2. Extracción de métricas conductuales: Muletillas (Actualizado con Regex)[cite: 1, 2]
-      const fillerRegex = /\b(e+|m+|est[e]+|bueno|o sea|pues|digamos|como dec[ií]a+)\b/gi;
-      const cleanText = text.toLowerCase().replace(/[.,?!]/g, "");
-      const matches = cleanText.match(fillerRegex);
-      const fillerCount = matches ? matches.length : 0;
-      
-      setMetrics((prev) => ({ ...prev, fillerWords: fillerCount }));
-
-      // 3. Enviamos el texto transcrito a GPT-4o para obtener feedback y la siguiente pregunta
-      const interviewResponse = await fetch("/api/entrevistador", {
+      const res = await fetch("/api/entrevistador", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userResponse: text, currentQuestion }),
+        body: JSON.stringify({ 
+          userResponse: userInput, 
+          currentQuestion, 
+          turnCount: nextCount, 
+          companyName 
+        }),
       });
-      
-      if (!interviewResponse.ok) {
-        throw new Error("Error en la API del entrevistador (Verifica tu saldo de OpenAI)");
+
+      const data = await res.json();
+      setUserInput("");
+      setLastFeedback(data.feedback);
+
+      if (data.nextQuestion === "FIN") {
+        setCurrentQuestion("Entrevista finalizada. Reporte final: " + data.finalReport);
+        setTurnCount(6);
+      } else {
+        setCurrentQuestion(data.nextQuestion);
+        setTurnCount(nextCount);
       }
-
-      const interviewData = await interviewResponse.json();
-      
-      // Actualizamos la UI con los datos de la IA
-      setFeedback(interviewData.feedback || "Respuesta registrada correctamente.");
-      setCurrentQuestion(interviewData.nextQuestion || "Gracias por tus respuestas. Hemos finalizado la entrevista piloto.");
-
     } catch (error) {
-      console.error("Error procesando la entrevista:", error);
-      setTranscript("Error: No se pudo procesar el audio.");
-      setFeedback("Hubo un error de conexión al evaluar tus métricas. Es probable que necesites revisar el saldo de tu cuenta de OpenAI (Error 429).");
+      setCurrentQuestion("Error al conectar con el reclutador.");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  return (
-    <main className="min-h-screen bg-gray-50 text-gray-800 p-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-8">
-        
-        <header className="text-center">
-          <h1 className="text-3xl font-bold text-blue-900">Simulador de Entrevistas 2D</h1>
-          <p className="text-gray-500 mt-2">Entrenamiento y Evaluación Automatizada de Habilidades Blandas</p>
-        </header>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          
-          {/* Módulo del Entrevistador (Avatar) */}
-          <section className="bg-white p-6 rounded-xl shadow-md flex flex-col items-center text-center space-y-4">
-            <div className="w-32 h-32 bg-indigo-100 rounded-full flex items-center justify-center border-4 border-indigo-500">
-              <span className="text-4xl">🧑‍💼</span>
-            </div>
-            <h2 className="text-xl font-semibold text-indigo-900">Reclutador IA</h2>
-            <div className="bg-indigo-50 p-4 rounded-lg w-full border border-indigo-100 min-h-[100px] flex items-center justify-center">
-              <p className="text-lg italic">"{currentQuestion}"</p>
-            </div>
-          </section>
-
-          {/* Módulo del Usuario (Estudiante) */}
-          <section className="bg-white p-6 rounded-xl shadow-md flex flex-col items-center justify-center space-y-6">
-            <h2 className="text-xl font-semibold">Tu Turno</h2>
-            
-            <button 
-              onClick={isRecording ? handleStop : handleStart}
-              disabled={isProcessing}
-              className={`px-8 py-4 rounded-full font-bold text-white transition-all transform hover:scale-105 ${
-                isProcessing ? "bg-gray-400 cursor-not-allowed" 
-                : isRecording ? "bg-red-500 animate-pulse" 
-                : "bg-green-600 hover:bg-green-700 shadow-lg"
-              }`}
-            >
-              {isProcessing ? "Analizando métricas..." : isRecording ? "⏹ Detener y Enviar" : "🎙️ Responder Pregunta"}
-            </button>
-
-            {isRecording && <p className="text-red-500 text-sm font-medium">Grabando audio...</p>}
-          </section>
-
+  if (!started) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-950 p-6">
+        <div className="bg-slate-900 p-8 rounded-2xl border border-slate-700 w-full max-w-md text-center">
+          <h1 className="text-2xl text-white font-bold mb-6">Configurar Entrevista</h1>
+          <input 
+            className="w-full bg-slate-800 text-white p-3 rounded mb-4 border border-slate-600"
+            placeholder="Nombre de la empresa"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
+          <button onClick={startInterview} className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-500">
+            Comenzar Entrevista
+          </button>
         </div>
+      </div>
+    );
+  }
 
-        {/* Panel de Retroalimentación Basado en Datos */}
-        <section className="bg-white p-6 rounded-xl shadow-md border-t-4 border-blue-500 space-y-4">
-          <h3 className="text-2xl font-bold text-gray-800">Panel de Retroalimentación</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <h4 className="text-sm text-gray-500 uppercase font-bold tracking-wider">Latencia</h4>
-              <p className="text-2xl font-black text-blue-600">{metrics.latency} <span className="text-sm font-normal">seg</span></p>
-            </div>
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <h4 className="text-sm text-gray-500 uppercase font-bold tracking-wider">Duración</h4>
-              <p className="text-2xl font-black text-blue-600">{metrics.duration} <span className="text-sm font-normal">seg</span></p>
-            </div>
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <h4 className="text-sm text-gray-500 uppercase font-bold tracking-wider">Muletillas</h4>
-              <p className="text-2xl font-black text-red-500">{metrics.fillerWords} <span className="text-sm font-normal">detectadas</span></p>
-            </div>
+  return (
+    <main className="h-screen w-full relative overflow-hidden bg-slate-900 flex flex-col justify-between">
+      <div className="absolute inset-0 bg-[url('/oficina.jpg')] bg-cover bg-center opacity-40"></div>
+
+      <div className="relative z-20 w-full p-6 flex justify-end">
+        {lastFeedback && (
+          <div className="bg-black/60 border-l-4 border-blue-500 p-4 rounded text-sm text-gray-200 max-w-sm">
+            <p className="font-bold text-blue-400">Feedback:</p>
+            {lastFeedback}
+          </div>
+        )}
+      </div>
+
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-end pb-2">
+        <img src="/empresario.png" alt="Reclutador" className="h-[30rem] object-contain drop-shadow-2xl" />
+      </div>
+
+      <div className="relative z-20 w-full flex justify-center pb-8 px-4">
+        <div className="w-full max-w-4xl bg-black/90 border border-slate-600 rounded-2xl p-6 shadow-2xl">
+          <div className="text-2xl text-white mb-6 leading-relaxed">
+            {displayedText}
+            {isTyping && <span className="animate-pulse">|</span>}
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <h4 className="font-bold text-gray-700 border-b pb-1">Transcripción (Speech-to-Text):</h4>
-              <p className="text-gray-600 mt-2">{transcript || "Esperando tu primera respuesta..."}</p>
-            </div>
-            <div>
-              <h4 className="font-bold text-gray-700 border-b pb-1">Feedback Cualitativo (Asertividad/Síntesis):</h4>
-              <p className="text-gray-600 mt-2 whitespace-pre-wrap">{feedback || "Aquí aparecerán las observaciones de la IA."}</p>
-            </div>
-          </div>
-        </section>
-
+          {!isTyping && turnCount <= 5 && (
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <input
+                autoFocus
+                className="flex-1 bg-transparent border-b border-slate-500 text-white p-2 focus:outline-none"
+                placeholder="Escribe tu respuesta..."
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+              />
+              <button disabled={isProcessing} className="text-blue-400 font-bold">Enviar</button>
+            </form>
+          )}
+        </div>
       </div>
     </main>
   );
