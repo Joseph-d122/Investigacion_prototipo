@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+// Importamos Gemini directamente al cliente
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export default function SimuladorVisualNovel() {
   const [companyName, setCompanyName] = useState("");
@@ -45,18 +47,39 @@ export default function SimuladorVisualNovel() {
     const nextCount = turnCount + 1;
 
     try {
-      const res = await fetch("/api/entrevistador", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          userResponse: userInput, 
-          currentQuestion, 
-          turnCount: nextCount, 
-          companyName 
-        }),
+      // 1. Obtener la llave de API expuesta al cliente
+      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "";
+      if (!apiKey) throw new Error("Falta la API Key de Gemini en .env.local");
+
+      // 2. Inicializar Gemini
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
       });
 
-      const data = await res.json();
+      const isLastTurn = nextCount >= 5;
+
+      // 3. Crear el prompt que antes tenías en tu API
+      const prompt = `Eres un reclutador experto enfocado en la empresa "${companyName}".
+      ${isLastTurn ? "Esta es la última pregunta." : ""}
+      
+      Reglas:
+      1. Haz preguntas concisas (máximo 15 palabras) sobre habilidades técnicas y blandas aplicadas a ${companyName}.
+      2. Evalúa la respuesta anterior del estudiante de forma breve y constructiva.
+      
+      Respuesta anterior: "${userInput}"
+      Pregunta anterior: "${currentQuestion}"
+      
+      Responde en JSON:
+      - "feedback": Breve análisis de la respuesta anterior.
+      - "nextQuestion": Tu siguiente pregunta (o "FIN" si ya se completaron los turnos).
+      - "finalReport": Si es el último turno, genera un resumen con 3 consejos clave de mejora. Si no, pon "".`;
+
+      // 4. Hacer la petición directa a Google
+      const result = await model.generateContent(prompt);
+      const data = JSON.parse(result.response.text());
+
       setUserInput("");
       setLastFeedback(data.feedback);
 
@@ -68,7 +91,8 @@ export default function SimuladorVisualNovel() {
         setTurnCount(nextCount);
       }
     } catch (error) {
-      setCurrentQuestion("Error al conectar con el reclutador.");
+      console.error(error);
+      setCurrentQuestion("Error al conectar con el reclutador. Revisa tu conexión y API Key.");
     } finally {
       setIsProcessing(false);
     }
