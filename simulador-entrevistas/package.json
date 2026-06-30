@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.9.0",
+    "@google/generative-ai": "^0.24.1",
     "next": "16.2.9",
     "openai": "^6.44.0",
     "react": "19.2.4",
@@ -25,7 +26,4 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   }
-
 }
-
-
